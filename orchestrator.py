@@ -80,7 +80,7 @@ def save_output(student_name: str, step: str, data):
 
 def step_diagnose(profile: StudentProfile):
     """Step 1: 生成诊断测试"""
-    print(f"\n🔬 [DiagnoseAgent] 为 {profile.name} 生成诊断测试...")
+    print(f"\n[DiagnoseAgent] Generating diagnostic test for {profile.name}...")
 
     with open(BASE_DIR / "config.yaml", "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
@@ -104,28 +104,28 @@ def step_diagnose(profile: StudentProfile):
     result: DiagnosticTest = run_diagnose(params)
     out_path = save_output(profile.name, "diagnose", result)
 
-    print(f"✅ 诊断测试已生成: {out_path}")
-    print(f"   共 {len(result.questions)} 题 (Part A:单词 / Part B:语法 / Part C:阅读)")
-    print(f"   答案表: {len(result.answer_sheet)} 题")
+    print(f"   Test generated: {out_path}")
+    print(f"   Total: {len(result.questions)} questions (Part A/B/C)")
+    print(f"   Answer key: {len(result.answer_sheet)} entries")
     return result
 
 
 def step_analyze(profile: StudentProfile):
     """Step 2: 错题归因分析"""
-    print(f"\n🔍 [AnalyzeAgent] 分析 {profile.name} 的答题结果...")
+    print(f"\n[AnalyzeAgent] Analyzing answers for {profile.name}...")
 
     # 找最新的诊断测试
     diagnose_files = sorted((OUTPUT_DIR / profile.name).glob("diagnose_*.json"), reverse=True)
     if not diagnose_files:
-        print("❌ 没有诊断测试记录，请先运行 --step diagnose")
+        print("ERROR: No diagnostic test found. Please run --step diagnose first.")
         return None
 
     with open(diagnose_files[0], "r", encoding="utf-8") as f:
         diag_data = json.load(f)
 
     # 手动录入学生答案
-    print("\n📝 请输入学生答案（q_id: student_answer，空行结束）:")
-    print("   示例: Q1: goes")
+    print("\nPlease enter student answers (q_id: student_answer, blank line to finish):")
+    print("   Example: Q1: goes")
     student_answers = []
     while True:
         line = input("   > ").strip()
@@ -147,23 +147,23 @@ def step_analyze(profile: StudentProfile):
     result: AnalysisResult = run_analyze(params)
     out_path = save_output(profile.name, "analyze", result)
 
-    print(f"\n✅ 归因完成: {out_path}")
-    print(f"   错误模式: {result.error_pattern}")
-    print(f"   优先薄弱点: {result.weak_point}")
-    print(f"   起始正确率: {result.start_accuracy:.0%}")
-    print(f"   下一步: {result.next_action}")
-    print(f"   建议: {result.recommendation}")
+    print(f"\nAnalysis complete: {out_path}")
+    print(f"   Error pattern: {result.error_pattern}")
+    print(f"   Priority weak point: {result.weak_point}")
+    print(f"   Starting accuracy: {result.start_accuracy:.0%}")
+    print(f"   Next action: {result.next_action}")
+    print(f"   Recommendation: {result.recommendation}")
     return result
 
 
 def step_exercise(profile: StudentProfile):
     """Step 3: 生成每日练习"""
-    print(f"\n📝 [ExerciseAgent] 为 {profile.name} 生成每日练习...")
+    print(f"\n[ExerciseAgent] Generating daily exercise for {profile.name}...")
 
     # 找最新的分析结果
     analyze_files = sorted((OUTPUT_DIR / profile.name).glob("analyze_*.json"), reverse=True)
     if not analyze_files:
-        print("❌ 没有归因结果，请先运行 --step analyze")
+        print("ERROR: No analysis results found. Please run --step analyze first.")
         return None
 
     with open(analyze_files[0], "r", encoding="utf-8") as f:
@@ -192,22 +192,22 @@ def step_exercise(profile: StudentProfile):
     result: DailyExercise = run_exercise(params)
     out_path = save_output(profile.name, f"exercise_day{day}", result)
 
-    print(f"✅ 每日练习已生成: {out_path}")
-    print(f"   薄弱点: {result.weak_point}")
-    print(f"   题数: {len(result.questions)} (基础{sum(1 for q in result.questions if q.section=='基础巩固')} + 辨析{sum(1 for q in result.questions if q.section=='辨析训练')} + 挑战{sum(1 for q in result.questions if q.section=='综合挑战')})")
-    print(f"   💡 {result.daily_tip}")
+    print(f"   Daily exercise saved: {out_path}")
+    print(f"   Topic: {result.weak_point} | Questions: {len(result.questions)}")
+    print(f"   Sections: basic={sum(1 for q in result.questions if q.section=='基础巩固')} + compare={sum(1 for q in result.questions if q.section=='辨析训练')} + challenge={sum(1 for q in result.questions if q.section=='综合挑战')}")
+    print(f"   Tip: {result.daily_tip}")
     return result
 
 
 def step_report(profile: StudentProfile):
     """Step 4: 生成家长周报"""
-    print(f"\n📊 [ReportAgent] 为 {profile.name} 生成本周报告...")
+    print(f"\n[ReportAgent] Generating weekly report for {profile.name}...")
 
     # 找本周的练习记录
     exercise_files = list(sorted((OUTPUT_DIR / profile.name).glob("exercise_day*.json")))
 
     if not exercise_files:
-        print("❌ 本周没有练习记录")
+        print("ERROR: No exercise records this week.")
         return None
 
     # 找最近的分析
@@ -248,12 +248,12 @@ def step_report(profile: StudentProfile):
     result: ParentReport = run_report(params)
     out_path = save_output(profile.name, "report", result)
 
-    print(f"\n✅ 周报已生成: {out_path}")
-    print(f"\n{'='*50}")
-    print(f"📱 复制发送给家长：\n")
+    print(f"\nWeekly report saved: {out_path}")
+    print("\n" + "=" * 50)
+    print("*** Copy and send to parent: ***\n")
     print(result.report_text)
-    print(f"\n📋 下周计划: {result.next_plan}")
-    print(f"{'='*50}")
+    print(f"\nNext week plan: {result.next_plan}")
+    print("=" * 50)
     return result
 
 
@@ -266,7 +266,7 @@ def create_example_student():
     name = "亲戚孩子"
     path = DATA_DIR / f"{name}.json"
     if path.exists():
-        print(f"📁 {name} 档案已存在")
+        print(f"Student profile '{name}' already exists.")
         return
 
     profile = StudentProfile(
@@ -280,7 +280,7 @@ def create_example_student():
         notes="亲戚的孩子，初二，想看看AI出题有没有用",
     )
     save_student(profile)
-    print(f"✅ 已创建示例学生: {name}")
+    print(f"Created example student: {name}")
 
 
 # ============================================================
@@ -325,7 +325,7 @@ def main():
             result = step_report(profile)
 
         if result is None and step_name != "report":
-            print(f"⛔ {step_name} 执行失败，管道终止。")
+            print(f"Step {step_name} failed. Pipeline stopped.")
             break
 
     run_record.status = "completed"
