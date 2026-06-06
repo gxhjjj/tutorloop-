@@ -1,0 +1,11 @@
+{
+  "id": "relative_001",
+  "name": "亲戚孩子",
+  "grade": 8,
+  "textbook": "人教版",
+  "student_type": "课内提高",
+  "is_tutoring": false,
+  "sessions_per_week": 0,
+  "start_date": "2026-06-05",
+  "notes": "亲戚的孩子，初二，想看看AI出题有没有用"
+}

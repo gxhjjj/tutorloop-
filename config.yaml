@@ -1,0 +1,45 @@
+# ============================================================
+# Agent System 配置
+# ============================================================
+
+model:
+  provider: deepseek
+  model_id: deepseek-chat
+  temperature: 0.3
+  max_tokens: 4096
+
+agents:
+  diagnose:
+    version: v1.0
+    prompt_file: prompts/diagnose.yaml
+    description: "诊断测试生成器 - 生成20题定位薄弱点"
+
+  analyze:
+    version: v1.0
+    prompt_file: prompts/analyze.yaml
+    description: "错题归因分析器 - 错题→能力短板→下一步建议"
+
+  exercise:
+    version: v1.0
+    prompt_file: prompts/exercise.yaml
+    description: "每日练习生成器 - 8-10题专项训练"
+
+  report:
+    version: v1.0
+    prompt_file: prompts/report.yaml
+    description: "家长周报生成器 - 120字家长可读反馈"
+
+pipeline:
+  steps:
+    - diagnose
+    - analyze
+    - exercise    # 可循环 N 次
+    - report      # 每周触发
+
+langfuse:
+  enabled: true
+  host: http://localhost:3000
+
+output:
+  base_dir: output
+  format: json

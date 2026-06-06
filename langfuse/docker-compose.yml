@@ -1,0 +1,59 @@
+# LangFuse 本地部署配置 (D 盘持久化)
+# 来源: https://langfuse.com/self-hosting/local
+#
+# 启动前: Docker Desktop → Settings → Resources → File Sharing → 添加 D:\
+# 启动: docker compose up -d
+# 访问: http://localhost:3000
+
+services:
+  langfuse-server:
+    image: ghcr.io/langfuse/langfuse:3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/postgres
+      - NEXTAUTH_SECRET=mysecret
+      - SALT=mysalt
+      - NEXTAUTH_URL=http://localhost:3000
+      - TELEMETRY_ENABLED=false
+      - CLICKHOUSE_URL=http://clickhouse:8123
+      - CLICKHOUSE_USER=clickhouse
+      - CLICKHOUSE_PASSWORD=clickhouse
+      - CLICKHOUSE_MIGRATION_URL=clickhouse://clickhouse:9000
+      - LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES=true
+
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+    volumes:
+      - D:/langfuse-data/postgres:/var/lib/postgresql/data
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24-alpine
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user clickhouse --password clickhouse --query 'SELECT 1'"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    environment:
+      - CLICKHOUSE_USER=clickhouse
+      - CLICKHOUSE_PASSWORD=clickhouse
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    volumes:
+      - D:/langfuse-data/clickhouse:/var/lib/clickhouse
+      - D:/langfuse-data/logs:/var/log/clickhouse-server
