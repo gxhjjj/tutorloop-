@@ -42,6 +42,56 @@ def _render_template(template: str, variables: dict) -> str:
     return result
 
 
+def _call_with_retry(
+    client,
+    messages: list[dict],
+    output_model: type[BaseModel],
+    model: str = "deepseek-chat",
+    temperature: float = 0.3,
+    max_tokens: int = 4096,
+    max_retries: int = 2,
+):
+    """
+    调用 LLM 并处理错误：Pydantic 验证失败自动重试，网络异常包装后抛出。
+
+    重试策略:
+    - ValidationError: LLM 输出格式不对 → 重试（最多 max_retries 次）
+    - ConnectionError / Timeout: 网络问题 → 重试 1 次
+    - 其他异常: 直接包装为 RuntimeError 抛出
+    """
+    last_error = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_model=output_model,
+                messages=messages,
+            )
+            return response
+        except Exception as e:
+            last_error = e
+            error_type = type(e).__name__
+
+            if error_type == "ValidationError":
+                if attempt < max_retries:
+                    continue
+                raise RuntimeError(
+                    f"LLM 输出格式验证失败（已重试 {max_retries} 次）: {e}"
+                ) from e
+
+            if error_type in ("ConnectionError", "Timeout", "APITimeoutError"):
+                if attempt < 1:
+                    continue
+                raise RuntimeError(f"LLM 调用失败（网络错误）: {e}") from e
+
+            raise RuntimeError(f"LLM 调用失败: {error_type}: {e}") from e
+
+    raise RuntimeError(f"LLM 调用失败: {last_error}")
+
+
 def run_agent(
     prompt_yaml: str,
     output_model: type[BaseModel],
@@ -90,17 +140,16 @@ def run_agent(
     user_template = config.get("user_template", "")
     user_template = _render_template(user_template, user_vars)
 
-    # 调用 LLM
-    client = get_client()
-    response = client.chat.completions.create(
+    # 调用 LLM（带重试）
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_template},
+    ]
+    return _call_with_retry(
+        get_client(),
+        messages,
+        output_model,
         model=model,
         temperature=temperature,
         max_tokens=max_tokens,
-        response_model=output_model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_template},
-        ],
     )
-
-    return response
