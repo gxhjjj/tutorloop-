@@ -199,6 +199,45 @@ def get_skill_progress(conn: sqlite3.Connection, student_id: str) -> dict[str, d
 # 数据库初始化（首次运行）
 # ============================================================
 
+def compute_weekly_stats(conn: sqlite3.Connection, student_id: str) -> dict:
+    """计算一个学生本周的练习统计"""
+    rows = conn.execute(
+        """SELECT day, accuracy, weak_point FROM exercises
+           WHERE student_id = ? ORDER BY day""",
+        (student_id,),
+    ).fetchall()
+
+    if not rows:
+        return {
+            "day1_accuracy": 0.0,
+            "last_accuracy": 0.0,
+            "total_completed": 0,
+            "total_assigned": 0,
+            "accuracy_trend": "无数据",
+            "weak_point": "",
+        }
+
+    accuracies = [r["accuracy"] for r in rows]
+    day1_acc = accuracies[0]
+    last_acc = accuracies[-1]
+
+    if day1_acc < last_acc - 0.05:
+        trend = "提升"
+    elif last_acc < day1_acc - 0.05:
+        trend = "波动"
+    else:
+        trend = "稳定"
+
+    return {
+        "day1_accuracy": day1_acc,
+        "last_accuracy": last_acc,
+        "total_completed": len(rows),
+        "total_assigned": len(rows),
+        "accuracy_trend": trend,
+        "weak_point": rows[-1]["weak_point"] if rows else "",
+    }
+
+
 def ensure_db():
     """确保数据库文件存在并已初始化"""
     if not DEFAULT_DB_PATH.exists():
