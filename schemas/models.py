@@ -179,3 +179,40 @@ class PipelineRun(BaseModel):
     status: str = "running"
     started_at: str = Field(default_factory=lambda: datetime.now().isoformat())
     completed_at: Optional[str] = None
+
+
+# ============================================================
+# 实验记录：练习生命周期与结果
+# ============================================================
+
+class ExerciseStatus:
+    DRAFT = "draft"
+    APPROVED = "approved"
+    SENT = "sent"
+    COMPLETED = "completed"
+
+
+class ExerciseRun(BaseModel):
+    """一次练习从生成到下发的完整记录"""
+    exercise_id: str = Field(..., description="唯一 ID，格式：{student_id}_day{day}_{timestamp}")
+    student_id: str
+    day: int = Field(..., ge=1, description="该学生的第几天练习")
+    target: str = Field(..., description="本次练习目标或薄弱点")
+    draft_questions: list[dict] = Field(default_factory=list, description="AI 生成的原始题目草稿")
+    approved_questions: list[dict] = Field(default_factory=list, description="老师审核确认后的题目")
+    status: str = Field(default=ExerciseStatus.DRAFT, description="draft / approved / sent / completed")
+    modified_count: int = Field(default=0, description="老师修改或删除的题目数量")
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    sent_at: Optional[str] = None
+    prompt_version: str = "v1.0"
+
+
+class ExerciseResult(BaseModel):
+    """学生完成练习后的结果记录"""
+    exercise_id: str
+    completed: bool = Field(default=False, description="学生是否完成了本次练习")
+    accuracy: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="正确率（0.0-1.0）")
+    difficulty_notes: str = Field(default="", description="学生的困难点")
+    parent_feedback: str = Field(default="", description="家长反馈原话")
+    next_action: str = Field(default="", description="老师对下一次练习的判断")
+    recorded_at: str = Field(default_factory=lambda: datetime.now().isoformat())

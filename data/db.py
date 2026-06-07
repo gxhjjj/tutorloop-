@@ -74,6 +74,32 @@ def init_db(path: str = None) -> sqlite3.Connection:
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             FOREIGN KEY (student_id) REFERENCES students(id)
         );
+
+        CREATE TABLE IF NOT EXISTS exercise_runs (
+            exercise_id TEXT PRIMARY KEY,
+            student_id TEXT NOT NULL,
+            day INTEGER NOT NULL,
+            target TEXT NOT NULL,
+            draft_questions_json TEXT NOT NULL DEFAULT '[]',
+            approved_questions_json TEXT NOT NULL DEFAULT '[]',
+            status TEXT NOT NULL DEFAULT 'draft',
+            modified_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            sent_at TEXT,
+            prompt_version TEXT NOT NULL DEFAULT 'v1.0',
+            FOREIGN KEY (student_id) REFERENCES students(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS exercise_results (
+            exercise_id TEXT PRIMARY KEY,
+            completed INTEGER NOT NULL DEFAULT 0,
+            accuracy REAL,
+            difficulty_notes TEXT DEFAULT '',
+            parent_feedback TEXT DEFAULT '',
+            next_action TEXT DEFAULT '',
+            recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (exercise_id) REFERENCES exercise_runs(exercise_id)
+        );
     """)
     conn.commit()
     return conn
@@ -243,3 +269,155 @@ def ensure_db():
     if not DEFAULT_DB_PATH.exists():
         return init_db()
     return sqlite3.connect(str(DEFAULT_DB_PATH))
+
+
+# ============================================================
+# 练习生命周期管理
+# ============================================================
+
+def save_exercise_run(conn: sqlite3.Connection, run) -> None:
+    """保存一次练习运行记录（插入或替换）"""
+    import json as _json
+    conn.execute(
+        """INSERT OR REPLACE INTO exercise_runs
+           (exercise_id, student_id, day, target,
+            draft_questions_json, approved_questions_json,
+            status, modified_count, created_at, sent_at, prompt_version)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (
+            run.exercise_id, run.student_id, run.day, run.target,
+            _json.dumps(run.draft_questions, ensure_ascii=False),
+            _json.dumps(run.approved_questions, ensure_ascii=False),
+            run.status, run.modified_count,
+            run.created_at, run.sent_at, run.prompt_version,
+        ),
+    )
+    conn.commit()
+
+
+def get_exercise_run(conn: sqlite3.Connection, exercise_id: str) -> dict | None:
+    """按 ID 获取练习运行记录"""
+    row = conn.execute(
+        "SELECT * FROM exercise_runs WHERE exercise_id = ?", (exercise_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    import json as _json
+    data = dict(row)
+    data["draft_questions"] = _json.loads(data.pop("draft_questions_json", "[]"))
+    data["approved_questions"] = _json.loads(data.pop("approved_questions_json", "[]"))
+    return data
+
+
+def list_exercise_runs(conn: sqlite3.Connection, student_id: str) -> list[dict]:
+    """按学生获取所有练习运行记录（按 day 排序）"""
+    import json as _json
+    rows = conn.execute(
+        "SELECT * FROM exercise_runs WHERE student_id = ? ORDER BY day",
+        (student_id,),
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["draft_questions"] = _json.loads(d.pop("draft_questions_json", "[]"))
+        d["approved_questions"] = _json.loads(d.pop("approved_questions_json", "[]"))
+        result.append(d)
+    return result
+
+
+def get_latest_run(conn: sqlite3.Connection, student_id: str) -> dict | None:
+    """获取学生最近一次练习运行"""
+    row = conn.execute(
+        "SELECT * FROM exercise_runs WHERE student_id = ? ORDER BY created_at DESC LIMIT 1",
+        (student_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    import json as _json
+    data = dict(row)
+    data["draft_questions"] = _json.loads(data.pop("draft_questions_json", "[]"))
+    data["approved_questions"] = _json.loads(data.pop("approved_questions_json", "[]"))
+    return data
+
+
+def update_run_status(
+    conn: sqlite3.Connection, exercise_id: str, status: str, sent_at: str = None,
+) -> None:
+    """更新练习运行状态（draft/approved/sent/completed）"""
+    if sent_at:
+        conn.execute(
+            "UPDATE exercise_runs SET status = ?, sent_at = ? WHERE exercise_id = ?",
+            (status, sent_at, exercise_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE exercise_runs SET status = ? WHERE exercise_id = ?",
+            (status, exercise_id),
+        )
+    conn.commit()
+
+
+def save_approved_questions(
+    conn: sqlite3.Connection, exercise_id: str,
+    approved_questions: list[dict], modified_count: int,
+) -> None:
+    """保存老师审核确认后的题目并记录修改数"""
+    import json as _json
+    conn.execute(
+        "UPDATE exercise_runs SET approved_questions_json = ?, modified_count = ?, status = ? WHERE exercise_id = ?",
+        (_json.dumps(approved_questions, ensure_ascii=False), modified_count, "approved", exercise_id),
+    )
+    conn.commit()
+
+
+# ============================================================
+# 练习结果记录
+# ============================================================
+
+def save_exercise_result(conn: sqlite3.Connection, result) -> None:
+    """保存学生完成练习后的结果"""
+    conn.execute(
+        """INSERT OR REPLACE INTO exercise_results
+           (exercise_id, completed, accuracy, difficulty_notes,
+            parent_feedback, next_action, recorded_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            result.exercise_id,
+            int(result.completed),
+            result.accuracy,
+            result.difficulty_notes,
+            result.parent_feedback,
+            result.next_action,
+            result.recorded_at,
+        ),
+    )
+    conn.commit()
+
+
+def get_exercise_result(conn: sqlite3.Connection, exercise_id: str) -> dict | None:
+    """获取一次练习的结果记录"""
+    row = conn.execute(
+        "SELECT * FROM exercise_results WHERE exercise_id = ?", (exercise_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    data = dict(row)
+    data["completed"] = bool(data["completed"])
+    return data
+
+
+def list_recent_results(conn: sqlite3.Connection, student_id: str, limit: int = 5) -> list[dict]:
+    """获取学生最近 N 次练习结果（按记录时间倒序）"""
+    rows = conn.execute(
+        """SELECT r.* FROM exercise_results r
+           JOIN exercise_runs e ON r.exercise_id = e.exercise_id
+           WHERE e.student_id = ?
+           ORDER BY r.recorded_at DESC LIMIT ?""",
+        (student_id, limit),
+    ).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["completed"] = bool(d["completed"])
+        result.append(d)
+    return result

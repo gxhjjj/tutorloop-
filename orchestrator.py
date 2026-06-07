@@ -7,6 +7,7 @@ Orchestrator — 串联 4 个 Agent 的主控脚本
     python orchestrator.py --student 张三 --step exercise
     python orchestrator.py --student 张三 --step report
     python orchestrator.py --student 张三 --step all      # 一键跑全程
+    python orchestrator.py --student 张三 --step exercise --use-db  # 保存到 SQLite
 """
 import argparse
 import json
@@ -23,11 +24,13 @@ from schemas import (
     AnalysisResult,
     ExerciseInput,
     DailyExercise,
+    ExerciseQuestion,
     ReportInput,
     ParentReport,
     StudentAnswer,
     PipelineRun,
 )
+from app.exercise_service import generate_exercise_draft, validate_edited_questions
 
 BASE_DIR = Path(__file__).parent
 OUTPUT_DIR = BASE_DIR / "output"
@@ -156,12 +159,14 @@ def step_analyze(profile: StudentProfile):
     return result
 
 
-def step_exercise(profile: StudentProfile):
+def step_exercise(profile: StudentProfile, use_db: bool = False):
     """Step 3: 生成每日练习"""
     print(f"\n[ExerciseAgent] Generating daily exercise for {profile.name}...")
 
+    student_dir = OUTPUT_DIR / profile.name
+
     # 找最新的分析结果
-    analyze_files = sorted((OUTPUT_DIR / profile.name).glob("analyze_*.json"), reverse=True)
+    analyze_files = sorted(student_dir.glob("analyze_*.json"), reverse=True)
     if not analyze_files:
         print("ERROR: No analysis results found. Please run --step analyze first.")
         return None
@@ -169,17 +174,20 @@ def step_exercise(profile: StudentProfile):
     with open(analyze_files[0], "r", encoding="utf-8") as f:
         analysis = json.load(f)
 
-    # 找之前的练习记录
-    exercise_files = sorted((OUTPUT_DIR / profile.name).glob("exercise_*.json"))
+    # 找之前的练习记录（最近5次的题目，防重复）
+    exercise_files = sorted(student_dir.glob("exercise_day*.json"))
     day = len(exercise_files) + 1
     previous_exercises = []
-    for ef in exercise_files[-5:]:  # 最近5次
+    for ef in exercise_files[-5:]:
         with open(ef, "r", encoding="utf-8") as f:
             ex_data = json.load(f)
             for q in ex_data.get("questions", []):
                 previous_exercises.append(q.get("content", ""))
 
-    params = ExerciseInput(
+    # 使用应用函数生成练习草稿
+    exercise_run = generate_exercise_draft(
+        student_id=profile.id,
+        student_name=profile.name,
         grade=profile.grade,
         textbook=profile.textbook,
         weak_point=analysis.get("weak_point", "综合巩固"),
@@ -189,13 +197,38 @@ def step_exercise(profile: StudentProfile):
         previous_accuracy=analysis.get("start_accuracy", 0.0),
     )
 
-    result: DailyExercise = run_exercise(params)
+    # 从 draft_questions 构建 DailyExercise 用于保存
+    questions_list = []
+    for q in exercise_run.draft_questions:
+        try:
+            questions_list.append(ExerciseQuestion(**q))
+        except Exception:
+            continue
+    result = DailyExercise(
+        title=f"每日练习 — Day {day}",
+        weak_point=exercise_run.target,
+        day=day,
+        daily_tip="",
+        questions=questions_list,
+    )
+
+    # 保存 JSON 输出（兼容旧路径）
     out_path = save_output(profile.name, f"exercise_day{day}", result)
+
+    # 可选：保存到 SQLite
+    if use_db:
+        try:
+            from data.db import ensure_db, create_student, save_exercise_run
+            db = ensure_db()
+            create_student(db, profile)
+            save_exercise_run(db, exercise_run)
+            print(f"   Saved to SQLite (exercise_id={exercise_run.exercise_id})")
+        except Exception as e:
+            print(f"   WARNING: Failed to save to SQLite: {e}")
 
     print(f"   Daily exercise saved: {out_path}")
     print(f"   Topic: {result.weak_point} | Questions: {len(result.questions)}")
     print(f"   Sections: basic={sum(1 for q in result.questions if q.section=='基础巩固')} + compare={sum(1 for q in result.questions if q.section=='辨析训练')} + challenge={sum(1 for q in result.questions if q.section=='综合挑战')}")
-    print(f"   Tip: {result.daily_tip}")
     return result
 
 
@@ -203,32 +236,33 @@ def step_report(profile: StudentProfile):
     """Step 4: 生成家长周报"""
     print(f"\n[ReportAgent] Generating weekly report for {profile.name}...")
 
+    student_dir = OUTPUT_DIR / profile.name
+
     # 找本周的练习记录
-    exercise_files = list(sorted((OUTPUT_DIR / profile.name).glob("exercise_day*.json")))
+    exercise_files = list(sorted(student_dir.glob("exercise_day*.json")))
 
     if not exercise_files:
         print("ERROR: No exercise records this week.")
         return None
 
-    # 找最近的分析
-    analyze_files = sorted((OUTPUT_DIR / profile.name).glob("analyze_*.json"), reverse=True)
+    # 找所有归因分析（按时间排序），从归因数据提取正确率
+    analyze_files = sorted(student_dir.glob("analyze_*.json"))
     latest_analysis = ""
-    if analyze_files:
-        with open(analyze_files[0], "r", encoding="utf-8") as f:
-            analysis = json.load(f)
-        latest_analysis = analysis.get("error_pattern", "")
-        weak_point = analysis.get("weak_point", "")
-    else:
-        weak_point = "综合练习"
+    weak_point = "综合练习"
 
-    # 统计
     day1_acc = 0.0
     last_acc = 0.0
-    for ef in exercise_files:
-        with open(ef, "r", encoding="utf-8") as f:
-            ex_data = json.load(f)
-        # 读取关联的分析结果获取正确率
-        ex_name = ef.stem
+
+    if analyze_files:
+        with open(analyze_files[0], "r", encoding="utf-8") as f:
+            first_analysis = json.load(f)
+        day1_acc = first_analysis.get("start_accuracy", 0.0)
+
+        with open(analyze_files[-1], "r", encoding="utf-8") as f:
+            last_data = json.load(f)
+        last_acc = last_data.get("start_accuracy", 0.0)
+        latest_analysis = last_data.get("error_pattern", "")
+        weak_point = last_data.get("weak_point", "")
 
     week_start = exercise_files[0].stem.split("_")[-1][:8] if exercise_files else datetime.now().strftime("%Y%m%d")
     week_end = exercise_files[-1].stem.split("_")[-1][:8] if exercise_files else datetime.now().strftime("%Y%m%d")
@@ -238,7 +272,7 @@ def step_report(profile: StudentProfile):
         week_start=week_start,
         week_end=week_end,
         total_assigned=len(exercise_files),
-        total_completed=len(exercise_files),  # 简化：假设全部完成
+        total_completed=len(exercise_files),
         weak_point=weak_point,
         accuracy_day1=day1_acc,
         accuracy_last=last_acc,
@@ -293,6 +327,8 @@ def main():
     parser.add_argument("--step", type=str, default="diagnose",
                        choices=["diagnose", "analyze", "exercise", "report", "all", "init"],
                        help="执行步骤 (默认: diagnose)")
+    parser.add_argument("--use-db", action="store_true",
+                       help="同时保存练习运行记录到 SQLite")
     args = parser.parse_args()
 
     if args.step == "init":
@@ -320,7 +356,7 @@ def main():
         elif step_name == "analyze":
             result = step_analyze(profile)
         elif step_name == "exercise":
-            result = step_exercise(profile)
+            result = step_exercise(profile, use_db=args.use_db)
         elif step_name == "report":
             result = step_report(profile)
 

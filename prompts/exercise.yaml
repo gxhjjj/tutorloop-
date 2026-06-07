@@ -18,7 +18,7 @@ system:
 
 user_template: |
   ## 学生信息
-  - 年级：{grade}（{'初一' if grade == 7 else '初二' if grade == 8 else '初三' if grade == 9 else str(grade)}）
+  - 年级：{grade_name}
   - 教材版本：{textbook}
 
   ## 本次薄弱点

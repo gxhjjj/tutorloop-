@@ -12,4 +12,8 @@ from .models import (
     ReportInput,
     ParentReport,
     PipelineRun,
+    ExerciseQuestion,
+    ExerciseStatus,
+    ExerciseRun,
+    ExerciseResult,
 )

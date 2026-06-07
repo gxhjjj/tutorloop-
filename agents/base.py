@@ -3,6 +3,7 @@ Agent 共享基础设施
 
 去掉 atomic-agents 依赖，直接用 instructor + Pydantic 实现：
 - get_client(): 返回 instructor 包装的 DeepSeek 客户端
+- load_config(): 加载 config.yaml，缓存后返回
 - run_agent(): 通用 Agent 执行函数（加载 YAML → 构建 prompt → 调用 LLM → 验证输出）
 """
 import os
@@ -10,11 +11,23 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import OpenAI
 import instructor
+import yaml as _yaml
 from pydantic import BaseModel
 
 load_dotenv()
 
 BASE_DIR = Path(__file__).parent.parent
+_config_cache = None
+
+
+def load_config():
+    """加载 config.yaml，缓存后返回（每次调用 run_agent 不会重复读取）"""
+    global _config_cache
+    if _config_cache is None:
+        config_path = BASE_DIR / "config.yaml"
+        with open(config_path, "r", encoding="utf-8") as f:
+            _config_cache = _yaml.safe_load(f)
+    return _config_cache
 
 
 def get_client():
@@ -96,9 +109,9 @@ def run_agent(
     prompt_yaml: str,
     output_model: type[BaseModel],
     user_vars: dict,
-    model: str = "deepseek-chat",
-    temperature: float = 0.3,
-    max_tokens: int = 4096,
+    model: str = None,
+    temperature: float = None,
+    max_tokens: int = None,
 ):
     """
     通用 Agent 执行函数。
@@ -107,14 +120,23 @@ def run_agent(
         prompt_yaml: YAML 文件路径（相对于 prompts/ 目录）
         output_model: Pydantic 输出模型（用于结构化输出验证）
         user_vars: 填充 user_template 的变量字典
-        model: 模型名称
-        temperature: 温度
-        max_tokens: 最大 token 数
+        model: 模型名称（默认从 config.yaml 读取）
+        temperature: 温度（默认从 config.yaml 读取）
+        max_tokens: 最大 token 数（默认从 config.yaml 读取）
 
     返回:
         output_model 的实例（已验证的结构化输出）
     """
     import yaml
+
+    app_config = load_config()
+    model_cfg = app_config.get("model", {})
+    if model is None:
+        model = model_cfg.get("model_id", "deepseek-chat")
+    if temperature is None:
+        temperature = model_cfg.get("temperature", 0.3)
+    if max_tokens is None:
+        max_tokens = model_cfg.get("max_tokens", 4096)
 
     prompt_path = BASE_DIR / "prompts" / prompt_yaml
     with open(prompt_path, "r", encoding="utf-8") as f:
